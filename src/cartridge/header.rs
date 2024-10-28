@@ -1,10 +1,3 @@
-use log::info;
-use std::fmt::Display;
-use std::fs::File;
-use std::io::Read;
-use std::ptr::write;
-use thiserror::Error;
-
 static OLD_LICENSE_CODE: [Option<&'static str>; 0x100] = {
     let mut codes = [None; 0x100];
     codes[0x00] = Some("None");
@@ -265,42 +258,23 @@ static RAM_TYPES: [Option<&'static str>; 0x06] = {
     types
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct CartridgeHeader {
-    pub entry: [u8; 4],             // 0x100 - 0x103
-    pub logo: [u8; 48],             // 0x104 - 0x133
-    pub title: [u8; 16],            // 0x134 - 0x143
-    pub new_licensee_code: [u8; 2], // 0x144 - 0x145
-    pub sgb_flag: u8,               // 0x146
-    pub cartridge_type: u8,         // 0x147
-    pub rom_size: u8,               // 0x148
-    pub ram_size: u8,               // 0x149
-    pub destination_code: u8,       // 0x14A
-    pub old_licensee_code: u8,      // 0x14B
-    pub rom_version: u8,            // 0x14C
-    pub header_checksum: u8,        // 0x14D
-    pub global_checksum: [u8; 2],   // 0x14E - 0x14F
-}
-
-impl Default for CartridgeHeader {
-    fn default() -> Self {
-        Self {
-            entry: [0; 4],
-            logo: [0; 48],
-            title: [0; 16],
-            new_licensee_code: [0; 2],
-            sgb_flag: 0,
-            cartridge_type: 0,
-            rom_size: 0,
-            ram_size: 0,
-            destination_code: 0,
-            old_licensee_code: 0,
-            rom_version: 0,
-            header_checksum: 0,
-            global_checksum: [0; 2],
-        }
-    }
+    pub entry: [u8; 4],           // 0x100 - 0x103
+    pub logo: [u8; 48],           // 0x104 - 0x133
+    title: [u8; 15],              // 0x134 - 0x142
+    pub cgb_flag: u8,             // 0x143
+    new_licensee_code: [u8; 2],   // 0x144 - 0x145
+    pub sgb_flag: u8,             // 0x146
+    pub cartridge_type: u8,       // 0x147
+    pub rom_size: u8,             // 0x148
+    pub ram_size: u8,             // 0x149
+    pub destination_code: u8,     // 0x14A
+    old_licensee_code: u8,        // 0x14B
+    pub rom_version: u8,          // 0x14C
+    pub header_checksum: u8,      // 0x14D
+    pub global_checksum: [u8; 2], // 0x14E - 0x14F
 }
 
 impl CartridgeHeader {
@@ -314,11 +288,7 @@ impl CartridgeHeader {
         u16::from_be_bytes(self.new_licensee_code)
     }
 
-    pub fn get_global_checksum(&self) -> u16 {
-        u16::from_be_bytes(self.global_checksum)
-    }
-
-    fn get_licensee_name(&self) -> &'static str {
+    pub fn get_licensee_name(&self) -> &'static str {
         if self.old_licensee_code == 0x33 {
             NEW_LICENSE_CODE[self.get_new_licensee_code() as usize].unwrap_or("Unknown")
         } else {
@@ -326,135 +296,17 @@ impl CartridgeHeader {
         }
     }
 
-    fn get_cartridge_type(&self) -> &'static str {
+    pub fn get_cartridge_type(&self) -> &'static str {
         CARTRIDGE_TYPES[self.cartridge_type as usize].unwrap_or("Unknown")
     }
 
-    fn get_ram_size(&self) -> &'static str {
+    pub fn get_ram_size(&self) -> &'static str {
         RAM_TYPES[self.ram_size as usize].unwrap_or("Unknown")
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Cartridge {
-    header: CartridgeHeader,
-    rom: Vec<u8>,
-    ram: Vec<u8>,
-}
+pub fn load_header(rom: &[u8]) -> CartridgeHeader {
+    let header_slice = &rom[0x100..0x150];
 
-impl Cartridge {
-    pub fn validate_checksum(&self) -> bool {
-        let mut x: u8 = 0;
-        for i in 0x134..0x14D {
-            x = x.wrapping_sub(self.rom[i]).wrapping_sub(1);
-        }
-
-        x == self.header.header_checksum
-    }
-}
-
-impl Display for Cartridge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Title: {}\n", self.header.get_title())?;
-        write!(
-            f,
-            "Type: 0x{:02X} ({})\n",
-            self.header.cartridge_type,
-            self.header.get_cartridge_type()
-        )?;
-        write!(
-            f,
-            "Entry: 0x{:02X}{:02X}{:02X}{:02X}\n",
-            self.header.entry[0], self.header.entry[1], self.header.entry[2], self.header.entry[3]
-        )?;
-        write!(
-            f,
-            "ROM size: 0x{:02X} ({}KB)\n",
-            self.header.rom_size,
-            32 << self.header.rom_size
-        )?;
-        write!(
-            f,
-            "RAM size: 0x{:02X} ({})\n",
-            self.header.ram_size,
-            self.header.get_ram_size()
-        )?;
-        write!(
-            f,
-            "Licensee: 0x{:02X} ({})\n",
-            self.header.old_licensee_code,
-            self.header.get_licensee_name()
-        )?;
-        write!(f, "ROM version: {}\n", self.header.rom_version)?;
-        write!(
-            f,
-            "Header checksum: 0x{:02X} ({})\n",
-            self.header.header_checksum,
-            if self.validate_checksum() {
-                "PASSED"
-            } else {
-                "FAILED"
-            }
-        )
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum CartridgeError {
-    #[error("Read error")]
-    Read(#[from] std::io::Error),
-    #[error("Invalid header")]
-    InvalidHeader,
-    #[error("Invalid checksum")]
-    InvalidChecksum,
-}
-
-pub fn load_cartridge(rom_path: String) -> Result<Cartridge, CartridgeError> {
-    info!("Reading ROM file: {}", rom_path);
-
-    let mut cartridge = Cartridge::default();
-
-    // Read the entire ROM file and store it in the cartridge
-    let mut file = File::open(rom_path)?;
-    file.read_to_end(&mut cartridge.rom)?;
-
-    // Check if the ROM file is large enough to contain the header
-    if cartridge.rom.len() < 0x150 {
-        return Err(CartridgeError::InvalidHeader);
-    }
-
-    // Safety: We know the header format is fixed and the slice operations are within bounds
-    unsafe {
-        let header_slice = &cartridge.rom[0x100..0x150];
-        cartridge.header = std::ptr::read(header_slice.as_ptr() as *const CartridgeHeader);
-    }
-
-    if !cartridge.validate_checksum() {
-        return Err(CartridgeError::InvalidChecksum);
-    }
-
-    Ok(cartridge)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_load_cartridge() {
-        env_logger::init();
-
-        let cartridge = load_cartridge(String::from("roms/Tetris.gb")).unwrap();
-        assert_eq!(cartridge.rom.len(), 0x8000);
-        assert_eq!(cartridge.header.entry, [0x00, 0xC3, 0x50, 0x01]);
-        assert_eq!(cartridge.header.get_title(), "TETRIS".to_string());
-        assert_eq!(cartridge.header.get_cartridge_type(), "ROM ONLY");
-        assert_eq!(cartridge.header.rom_size, 0x00);
-        assert_eq!(cartridge.header.get_ram_size(), "None");
-        assert_eq!(cartridge.header.get_licensee_name(), "Nintendo");
-        assert_eq!(cartridge.header.rom_version, 0x01);
-        assert_eq!(cartridge.header.header_checksum, 0x0A);
-        assert_eq!(cartridge.header.get_global_checksum(), 0x16BF);
-        assert!(cartridge.validate_checksum());
-    }
+    unsafe { std::ptr::read(header_slice.as_ptr() as *const CartridgeHeader) }
 }

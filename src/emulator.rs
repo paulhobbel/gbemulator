@@ -7,7 +7,7 @@ use thiserror::Error;
 
 #[derive(Debug)]
 pub struct Emulator {
-    cartridge: Cartridge,
+    cartridge: Box<dyn Cartridge>,
     cpu: CPU,
     running: bool,
     paused: bool,
@@ -21,7 +21,7 @@ pub enum EmulatorError {
 }
 
 impl Emulator {
-    pub fn new(cartridge: Cartridge) -> Self {
+    pub fn new(cartridge: Box<dyn Cartridge>) -> Self {
         Self {
             cartridge,
             cpu: CPU,
